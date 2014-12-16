@@ -12,6 +12,7 @@ Python 3, so we need to bend over to work with both.
 
 from __future__ import print_function, with_statement
 import gdb
+import collections
 import sys
 
 if sys.version_info[0] >= 3:
@@ -56,10 +57,10 @@ RUBY_T_MASK   = 0x1f
 # whether or not this verison of Ruby was built with flonum support.
 def Qtrue():
     if Qtrue._Qtrue is None:
-        rb_true, _ = gdb.lookup_symbol('rb_true')
-        if rb_true is None:
-            raise "Unable to find true"
-        Qtrue._Qtrue = int(rb_true.value()(0))
+        rb_equal, _ = gdb.lookup_symbol('rb_equal')
+        if rb_equal is None:
+            raise "Unable to find rb_equal symbol to discovery 'true'"
+        Qtrue._Qtrue = int(rb_equal.value()(0, 0))
     return Qtrue._Qtrue
 Qtrue._Qtrue = None
 
@@ -112,6 +113,8 @@ class RubyVALUE(object):
     Class wrapping a gdb.Value that is a VALUE type
     """
 
+    _type = None
+
     def __init__(self, gdbval, cast_to=None):
         if cast_to:
             self._gdbval = gdbval.cast(cast_to)
@@ -144,18 +147,93 @@ class RubyVALUE(object):
         return RubyRBasic(self._gdbval).type()
 
     def is_immediate(self):
-        return IMMEDIATE_MASK() & long(self._gdbval)
+        return bool(IMMEDIATE_MASK() & long(self._gdbval))
 
-class RubyImmediate(RubyVALUE):
-    """
-    Class wrapping a gdb.Value that is an immediate type
-    """
+    @classmethod
+    def all_subclasses(cls):
+        if cls.__all_subclasses__ is None:
+            cls.__all_subclasses__ = set()
+            q = [cls]
+            while q:
+                parent = q.pop()
+                for child in parent.__subclasses__():
+                    if child not in cls.__all_subclasses__:
+                        cls.__all_subclasses__.add(child)
+                        q.append(child)
+        return cls.__all_subclasses__
+    __all_subclasses__ = None
+
+    @classmethod
+    def subclass_from_value(cls, v):
+        t = v.type()
+
+        # special cases first
+        if t == RUBY_T_FLOAT:
+            if long(v._gdbval) & FLONUM_MASK() == FLONUM_FLAG():
+                return RubyFlonum
+            else:
+                return RubyRFloat
+
+        for subclass in cls.all_subclasses():
+            if subclass._type and subclass._type == t:
+                return subclass
+
+        # Otherwise, use the base class
+        return cls
+
+    @classmethod
+    def from_value(cls, gdbval):
+        """
+        Try to locate the appropriate class dynamically, and cast as appropriate
+        """
+        try:
+            v = RubyVALUE(gdbval)
+            cls = cls.subclass_from_value(v)
+
+            # Only cast if we have a non-immediate
+            if issubclass(cls, RubyRBasic):
+                return cls(gdbval, cast_to=cls.get_gdb_type())
+            else:
+                return cls(gdbval)
+        except RuntimeError:
+            # Handle any kind of error by just using the base class
+            pass
+        return cls(gdbval)
+
+# Immediates and other specials:
 
 class RubyFixnum(RubyVALUE):
     """
     Class wrapping a gdb.Value that is a Fixnum
     """
-    pass
+    _type = RUBY_T_FIXNUM
+    def proxyval(self, visited):
+        return long(self._gdbval) >> 1
+
+class RubyFlonum(RubyVALUE):
+    """
+    Class wrapping immediate floating-point numbers (not RFloats)
+    """
+    def proxyval(self, visited):
+        if long(self._gdbval) == 0x8000000000000002:
+            return 0.0
+        else:
+            return None
+
+class RubyNil(RubyVALUE):
+    _type = RUBY_T_NIL
+    def proxyval(self, visited):
+        return None
+
+class RubyTrue(RubyVALUE):
+    _type = RUBY_T_TRUE
+    def proxyval(self, visited):
+        return True
+
+class RubyFalse(RubyVALUE):
+    _type = RUBY_T_FALSE
+    def proxyval(self, visited):
+        return False
 
 class RubyRBasic(RubyVALUE):
     """
@@ -168,11 +246,16 @@ class RubyRBasic(RubyVALUE):
         if self.is_immediate():
             raise ImmediateRubyVALUE(self)
 
-        long(self._gdbval.cast(RubyRBasic.get_gdb_type()).dereference()['flags'])
+        return long(self._gdbval.cast(RubyRBasic.get_gdb_type()).dereference()['flags'])
 
     def type(self):
-        flags() & RUBY_T_MASK
+        return self.flags() & RUBY_T_MASK
 
     @classmethod
     def get_gdb_type(cls):
         return gdb.lookup_type('struct ' + cls._typename).pointer()
+
+class RubyRFloat(RubyRBasic):
+    _typename = 'RFloat'
+    def proxyval(self, visited):
+        return float(self._gdbval.dereference()['float_value'])
