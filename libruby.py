@@ -16,6 +16,8 @@ hooks for Python.
 from __future__ import print_function, with_statement
 import gdb
 import collections
+import fractions
+import re
 import sys
 
 if sys.version_info[0] >= 3:
@@ -51,6 +53,8 @@ RUBY_T_ICLASS = 0x1d
 RUBY_T_ZOMBIE = 0x1e
 
 RUBY_T_MASK   = 0x1f
+
+RUBY_SPECIAL_SHIFT = 8
 
 _void_p = gdb.lookup_type('void').pointer()
 _unsigned_long = gdb.lookup_type('unsigned long')
@@ -136,18 +140,54 @@ def FL_USER(n):
 class ImmediateRubyVALUE(RuntimeError):
     pass
 
-class RubyVALUE(object):
+class RubyVal(object):
     """
-    Class wrapping a gdb.Value that is a VALUE type
+    A generic wrapper for any gdb.Value that might have meaning to the
+    Ruby runtime
     """
-
-    _type = None
+    _typename = None
+    _typepointer = False
 
     def __init__(self, gdbval, cast_to=None):
         if cast_to:
             self._gdbval = gdbval.cast(cast_to)
         else:
             self._gdbval = gdbval
+
+    def as_address(self):
+        return long(self._gdbval)
+
+    @classmethod
+    def get_gdb_type(cls):
+        if cls._typename is None:
+            return None
+        t = gdb.lookup_type(cls._typename)
+        if cls._typepointer:
+            return t.pointer()
+        else:
+            return t
+
+    @classmethod
+    def all_subclasses(cls):
+        if cls.__all_subclasses__ is None:
+            cls.__all_subclasses__ = set()
+            q = [cls]
+            while q:
+                parent = q.pop()
+                for child in parent.__subclasses__():
+                    if child not in cls.__all_subclasses__:
+                        cls.__all_subclasses__.add(child)
+                        q.append(child)
+        return cls.__all_subclasses__
+    __all_subclasses__ = None
+
+class RubyVALUE(RubyVal):
+    """
+    Class wrapping a gdb.Value that is a VALUE type
+    """
+
+    _type = None
+    _typename = 'VALUE'
 
     def proxyval(self, visited):
         class FakeRepr(object):
@@ -162,9 +202,6 @@ class RubyVALUE(object):
             def __repr__(self):
                 return '<VALUE at remote 0x%x>' % (self.address)
         return FakeRepr(self.as_address())
-
-    def as_address(self):
-        return long(self._gdbval)
 
     def type(self):
         immediate = self.as_address()
@@ -195,20 +232,6 @@ class RubyVALUE(object):
         return bool(IMMEDIATE_MASK() & self.as_address())
 
     @classmethod
-    def all_subclasses(cls):
-        if cls.__all_subclasses__ is None:
-            cls.__all_subclasses__ = set()
-            q = [cls]
-            while q:
-                parent = q.pop()
-                for child in parent.__subclasses__():
-                    if child not in cls.__all_subclasses__:
-                        cls.__all_subclasses__.add(child)
-                        q.append(child)
-        return cls.__all_subclasses__
-    __all_subclasses__ = None
-
-    @classmethod
     def subclass_from_value(cls, v):
         t = v.type()
 
@@ -235,15 +258,75 @@ class RubyVALUE(object):
             v = RubyVALUE(gdbval)
             cls = cls.subclass_from_value(v)
 
+            type = cls.get_gdb_type()
             # Only cast if we have a non-immediate
-            if issubclass(cls, RubyRBasic):
-                return cls(gdbval, cast_to=cls.get_gdb_type())
+            if type:
+                return cls(gdbval, cast_to=type)
             else:
                 return cls(gdbval)
         except RuntimeError:
             # Handle any kind of error by just using the base class
             pass
         return cls(gdbval)
+
+    @classmethod
+    def proxyval_from_value(cls, v, visited):
+        return cls.from_value(v).proxyval(visited)
+
+class ProxyAlreadyVisited(object):
+    """
+    Placeholder proxy to use when protecting against infinite
+    recursion due to loops in the object graph.
+
+    Analogous to the values emitted by the users of Py_ReprEnter and
+    Py_ReprLeave
+    """
+    def __init__(self, rep):
+        self._rep = rep
+
+    def __repr__(self):
+        return self._rep
+
+class RubySTTable(RubyVal):
+    """
+    Special wrapper class for st_table *, which Ruby uses for hashes
+    """
+    _typename = 'struct st_table'
+    _typepointer = True
+
+    def __init__(self, gdbval, keyproxy=None, valueproxy=None):
+        if keyproxy is None:
+            keyproxy = lambda x: x
+        if valueproxy is None:
+            valueproxy = lambda x: x
+
+        self.keyproxy = keyproxy
+        self.valueproxy = valueproxy
+
+        super(RubySTTable, self).__init__(gdbval, self.get_gdb_type())
+
+    def items(self):
+        if self._gdbval['entries_packed']:
+            for i in xrange(long(self._gdbval['as']['packed']['real_entries'])):
+                entry = self._gdbval['as']['packed']['entries'][i]
+                yield entry['key'], entry['val']
+        else:
+            ptr = self._gdbval['as']['big']['head']
+            while ptr:
+                yield ptr['key'], ptr['record']
+                ptr = ptr['fore']
+
+    def __getitem__(self, needle):
+        for k, v in self.items():
+            if k == needle:
+                return v
+        raise KeyError(needle)
+
+    def proxyval(self, visited):
+        result = dict()
+        for k, v in self.items():
+            result[self.keyproxy(k)] = self.valueproxy(v)
+        return result
 
 # Immediates and other specials:
 
@@ -259,6 +342,7 @@ class RubyFlonum(RubyVALUE):
     """
     Class wrapping immediate floating-point numbers (not RFloats)
     """
+    # Don't specify _type because RubyVALUE will handle the dispatch
     def rotr(self, v, b):
         return (v >> b) | (v << ((v.type.sizeof * 8) - 3))
 
@@ -287,12 +371,46 @@ class RubyFalse(RubyVALUE):
     def proxyval(self, visited):
         return False
 
+class RubyID(RubyVal):
+    _typename = 'ID'
+
+    @staticmethod
+    def global_symbols():
+        symbol, _ = gdb.lookup_symbol('global_symbols')
+        if symbol is None:
+            raise "Unable to find global_symbols symbol for converting symbols"
+        return symbol.value()
+
+    def __str__(self):
+        return self.string(set())
+
+    def __repr__(self):
+        return ':' + str(self)
+
+    def string(self, visited):
+        table = RubySTTable(RubyID.global_symbols()['id_str'])
+        return RubyVALUE.proxyval_from_value(table[self._gdbval], visited)
+
+    def proxyval(self, visited):
+        return ':' + self.string(visited)
+
+class RubySymbol(RubyVALUE):
+    _type = RUBY_T_SYMBOL
+
+    def sym2id(self):
+        return RubyID(self.as_address() >> RUBY_SPECIAL_SHIFT)
+
+    def proxyval(self, visited):
+        return self.sym2id()
+
+# VALUE types that are pointers
+
 class RubyRBasic(RubyVALUE):
     """
     Class wrapping a gdb.Value that is a non-immediate Ruby VALUE
     """
-
-    _typename = 'RBasic'
+    _typename = 'struct RBasic'
+    _typepointer = True
 
     def flags(self):
         if self.is_immediate():
@@ -303,24 +421,20 @@ class RubyRBasic(RubyVALUE):
     def type(self):
         return self.flags() & RUBY_T_MASK
 
-    @classmethod
-    def get_gdb_type(cls):
-        return gdb.lookup_type('struct ' + cls._typename).pointer()
-
 class RubyRFloat(RubyRBasic):
-    _typename = 'RFloat'
+    _typename = 'struct RFloat'
     def proxyval(self, visited):
         return float(self._gdbval.dereference()['float_value'])
 
 class RubyRObject(RubyRBasic):
-    _typename = 'RObject'
+    _typename = 'struct RObject'
 
 class RubyRClass(RubyRBasic):
-    _typename = 'RClass'
+    _typename = 'struct RClass'
 
 class RubyRString(RubyRBasic):
     _type = RUBY_T_STRING
-    _typename = 'RString'
+    _typename = 'struct RString'
 
     @staticmethod
     def RSTRING_NOEMBED():
@@ -335,23 +449,9 @@ class RubyRString(RubyRBasic):
             length = (self.flags() >> (2 + FL_USHIFT())) & 31
         return ptr.cast(_char.array(long(length)).pointer()).dereference().string()
 
-class ProxyAlreadyVisited(object):
-    """
-    Placeholder proxy to use when protecting against infinite
-    recursion due to loops in the object graph.
-
-    Analogous to the values emitted by the users of Py_ReprEnter and
-    Py_ReprLeave
-    """
-    def __init__(self, rep):
-        self._rep = rep
-
-    def __repr__(self):
-        return self._rep
-
 class RubyRArray(RubyRBasic):
     _type = RUBY_T_ARRAY
-    _typename = 'RArray'
+    _typename = 'struct RArray'
 
     @staticmethod
     def RARRAY_EMBED_FLAG():
@@ -381,5 +481,88 @@ class RubyRArray(RubyRBasic):
 
         ary = self.array()
         length = self.length()
-        return [RubyVALUE.from_value(ary[i]).proxyval(visited)
-                for i in xrange(length)]
+        return [RubyVALUE.proxyval_from_value(ary[i], visited)
+                for i in xrange(long(length))]
+
+class RubyRRegexp(RubyRBasic):
+    _type = RUBY_T_REGEXP
+    _typename = 'struct RRegexp'
+
+    ONIG_OPTION_IGNORECASE = 1 << 0
+    ONIG_OPTION_EXTEND = 1 << 1
+    ONIG_OPTION_MULTILINE = 1 << 2
+
+    def proxyval(self, visited):
+        flags = 0
+        opts = self._gdbval['ptr']['options']
+        if opts & self.ONIG_OPTION_IGNORECASE:
+            flags |= re.IGNORECASE
+        if opts & self.ONIG_OPTION_EXTEND:
+            flags |= re.VERBOSE
+        if opts & self.ONIG_OPTION_MULTILINE:
+            flags |= re.MULTILINE
+
+        return re.compile(RubyVALUE.proxyval_from_value(self._gdbval['src'], visited),
+                          flags)
+
+class RubyRHash(RubyRBasic):
+    _type = RUBY_T_HASH
+    _typename = 'struct RHash'
+
+    def items(self):
+        return RubySTTable(self._gdbval['ntbl']).items()
+
+    def proxyval(self, visited):
+        if self.as_address() in visited:
+            return ProxyAlreadyVisited('{...}')
+        visited.add(self.as_address())
+
+        if not self._gdbval['ntbl']:
+            return {}
+
+        result = {}
+        for k, v in self.items():
+            k = RubyVALUE.proxyval_from_value(k, visited)
+            v = RubyVALUE.proxyval_from_value(v, visited)
+            result[k] = v
+        return result
+
+class RubyRFile(RubyRBasic):
+    _type = RUBY_T_FILE
+    _typename = 'struct RFile'
+
+class RubyRRational(RubyRBasic):
+    _type = RUBY_T_RATIONAL
+    _typename = 'struct RRational'
+
+    def proxyval(self, visited):
+        num = RubyVALUE.proxyval_from_value(self._gdbval['num'], visited)
+        den = RubyVALUE.proxyval_from_value(self._gdbval['den'], visited)
+        return fractions.Fraction(num, den)
+
+class RubyRComplex(RubyRBasic):
+    _type = RUBY_T_COMPLEX
+    _typename = 'struct RComplex'
+
+    def proxyval(self, visited):
+        real = RubyVALUE.proxyval_from_value(self._gdbval['real'], visited)
+        imag = RubyVALUE.proxyval_from_value(self._gdbval['imag'], visited)
+        return complex(real, imag)
+
+class RubyValPrinter(object):
+    def __init__(self, gdbval):
+        self.gdbval = gdbval
+
+    def to_string(self):
+        return repr(RubyVALUE.proxyval_from_value(self.gdbval, set()))
+
+def pretty_printer_lookup(gdbval):
+    for cls in RubyVALUE.all_subclasses():
+        if cls.get_gdb_type() == gdbval.type:
+            return RubyValPrinter(gdbval)
+
+def register(obj):
+    if obj == None:
+        obj = gdbva
+    obj.pretty_printers.append(pretty_printer_lookup)
+register(gdb.current_objfile())
