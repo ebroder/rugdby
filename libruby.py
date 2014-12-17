@@ -8,6 +8,9 @@ Python, but here we go.
 Also, apparently gdb is sometimes built against Python 2 and sometimes
 Python 3, so we need to bend over to work with both.
 
+Much of this logic is either inspired by or taken from the equivalent
+hooks for Python.
+
 """
 
 from __future__ import print_function, with_statement
@@ -48,6 +51,9 @@ RUBY_T_ICLASS = 0x1d
 RUBY_T_ZOMBIE = 0x1e
 
 RUBY_T_MASK   = 0x1f
+
+_void_p = gdb.lookup_type('void').pointer()
+_double = gdb.lookup_type('double')
 
 # With Ruby 2.0 and the introduction of floating-point numbers
 # ("flonums") as an immediate value type, true, false, nil, and the
@@ -120,6 +126,20 @@ class RubyVALUE(object):
             self._gdbval = gdbval.cast(cast_to)
         else:
             self._gdbval = gdbval
+
+    def proxyval(self, visited):
+        class FakeRepr(object):
+            """
+            Class representing a non-descript VALUE in the inferior
+            process for when we either don't have a custom scraper or
+            the object is corrupted somehow. Mostly just has a sane
+            repr()
+            """
+            def __init__(self, address):
+                self.address = address
+            def __repr__(self):
+                return '<VALUE at remote 0x%x>' % (self.address)
+        return FakeRepr(long(self._gdbval))
 
     def type(self):
         immediate = long(self._gdbval)
@@ -214,11 +234,18 @@ class RubyFlonum(RubyVALUE):
     """
     Class wrapping immediate floating-point numbers (not RFloats)
     """
+    def rotr(self, v, b):
+        return (v >> b) | (v << ((v.type.sizeof * 8) - 3))
+
     def proxyval(self, visited):
         if long(self._gdbval) == 0x8000000000000002:
             return 0.0
         else:
-            return None
+            v = self._gdbval.cast(gdb.lookup_type('unsigned long'))
+            b63 = v >> 63
+            t = (2 - b63) | (v & ~3)
+            t = self.rotr(t, 3)
+            return float(t.cast(_void_p).cast(_double))
 
 class RubyNil(RubyVALUE):
     _type = RUBY_T_NIL
@@ -259,3 +286,16 @@ class RubyRFloat(RubyRBasic):
     _typename = 'RFloat'
     def proxyval(self, visited):
         return float(self._gdbval.dereference()['float_value'])
+
+class RubyRObject(RubyRBasic):
+    _typename = 'RObject'
+
+class RubyRClass(RubyRBasic):
+    _typename = 'RClass'
+
+class RubyRString(RubyRBasic):
+    RSTRING_NOEMBED = 
+
+    _typename = 'RString'
+    def proxyval(self, visited):
+        
