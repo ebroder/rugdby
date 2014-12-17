@@ -563,6 +563,6 @@ def pretty_printer_lookup(gdbval):
 
 def register(obj):
     if obj == None:
-        obj = gdbva
+        obj = gdb
     obj.pretty_printers.append(pretty_printer_lookup)
 register(gdb.current_objfile())
