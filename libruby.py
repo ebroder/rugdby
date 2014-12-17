@@ -53,7 +53,9 @@ RUBY_T_ZOMBIE = 0x1e
 RUBY_T_MASK   = 0x1f
 
 _void_p = gdb.lookup_type('void').pointer()
+_unsigned_long = gdb.lookup_type('unsigned long')
 _double = gdb.lookup_type('double')
+_char = gdb.lookup_type('char')
 
 # With Ruby 2.0 and the introduction of floating-point numbers
 # ("flonums") as an immediate value type, true, false, nil, and the
@@ -111,6 +113,26 @@ def SYMBOL_MASK():
 def SYMBOL_FLAG():
     return 0xc
 
+# Ruby 1.9 introduced object "trust" (which is somehow different from
+# taint tracking) and a new flag to go with it. If anything goes
+# wrong, assume that 1.8 is dead
+def FL_USHIFT():
+    if FL_USHIFT._FL_USHIFT is None:
+        try:
+            if gdb.lookup_symbol('rb_obj_untrusted')[0] is None:
+                FL_USHIFT._FL_USHIFT = 11
+            else:
+                FL_USHIFT._FL_USHIFT = 12
+        except RuntimeError:
+            # odds are pretty good we're not dealing with Ruby 1.8, so
+            # make a good guess
+            FL_USHIFT._FL_USHIFT = 12
+    return FL_USHIFT._FL_USHIFT
+FL_USHIFT._FL_USHIFT = None
+
+def FL_USER(n):
+    return 1 << (FL_USHIFT() + n)
+
 class ImmediateRubyVALUE(RuntimeError):
     pass
 
@@ -139,10 +161,13 @@ class RubyVALUE(object):
                 self.address = address
             def __repr__(self):
                 return '<VALUE at remote 0x%x>' % (self.address)
-        return FakeRepr(long(self._gdbval))
+        return FakeRepr(self.as_address())
+
+    def as_address(self):
+        return long(self._gdbval)
 
     def type(self):
-        immediate = long(self._gdbval)
+        immediate = self.as_address()
 
         # deal with specials
         if immediate == Qfalse():
@@ -167,7 +192,7 @@ class RubyVALUE(object):
         return RubyRBasic(self._gdbval).type()
 
     def is_immediate(self):
-        return bool(IMMEDIATE_MASK() & long(self._gdbval))
+        return bool(IMMEDIATE_MASK() & self.as_address())
 
     @classmethod
     def all_subclasses(cls):
@@ -228,7 +253,7 @@ class RubyFixnum(RubyVALUE):
     """
     _type = RUBY_T_FIXNUM
     def proxyval(self, visited):
-        return long(self._gdbval) >> 1
+        return self.as_address() >> 1
 
 class RubyFlonum(RubyVALUE):
     """
@@ -238,10 +263,10 @@ class RubyFlonum(RubyVALUE):
         return (v >> b) | (v << ((v.type.sizeof * 8) - 3))
 
     def proxyval(self, visited):
-        if long(self._gdbval) == 0x8000000000000002:
+        if self.as_address() == 0x8000000000000002:
             return 0.0
         else:
-            v = self._gdbval.cast(gdb.lookup_type('unsigned long'))
+            v = self._gdbval.cast(_unsigned_long)
             b63 = v >> 63
             t = (2 - b63) | (v & ~3)
             t = self.rotr(t, 3)
@@ -294,8 +319,67 @@ class RubyRClass(RubyRBasic):
     _typename = 'RClass'
 
 class RubyRString(RubyRBasic):
-    RSTRING_NOEMBED = 
-
+    _type = RUBY_T_STRING
     _typename = 'RString'
+
+    @staticmethod
+    def RSTRING_NOEMBED():
+        return FL_USER(1)
+
     def proxyval(self, visited):
-        
+        if self.flags() & RubyRString.RSTRING_NOEMBED():
+            ptr = self._gdbval['as']['heap']['ptr']
+            length = self._gdbval['as']['heap']['len']
+        else:
+            ptr = self._gdbval['as']['ary']
+            length = (self.flags() >> (2 + FL_USHIFT())) & 31
+        return ptr.cast(_char.array(long(length)).pointer()).dereference().string()
+
+class ProxyAlreadyVisited(object):
+    """
+    Placeholder proxy to use when protecting against infinite
+    recursion due to loops in the object graph.
+
+    Analogous to the values emitted by the users of Py_ReprEnter and
+    Py_ReprLeave
+    """
+    def __init__(self, rep):
+        self._rep = rep
+
+    def __repr__(self):
+        return self._rep
+
+class RubyRArray(RubyRBasic):
+    _type = RUBY_T_ARRAY
+    _typename = 'RArray'
+
+    @staticmethod
+    def RARRAY_EMBED_FLAG():
+        return FL_USER(1)
+
+    def array(self):
+        if self.flags() & RubyRArray.RARRAY_EMBED_FLAG():
+            return self._gdbval['as']['ary']
+        else:
+            return self._gdbval['as']['heap']['ptr']
+
+    def length(self):
+        if self.flags() & RubyRArray.RARRAY_EMBED_FLAG():
+            return (self.flags() >> (3 + FL_USHIFT())) & 3
+        else:
+            return self._gdbval['as']['heap']['len']
+
+    def __getitem__(self, i):
+        if i > self.length():
+            raise IndexError("list index out of range")
+        return self.array()[i]
+
+    def proxyval(self, visited):
+        if self.as_address() in visited:
+            return ProxyAlreadyVisited('[...]')
+        visited.add(self.as_address())
+
+        ary = self.array()
+        length = self.length()
+        return [RubyVALUE.from_value(ary[i]).proxyval(visited)
+                for i in xrange(length)]
