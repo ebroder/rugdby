@@ -17,6 +17,7 @@ from __future__ import print_function, with_statement
 import gdb
 import collections
 import fractions
+import functools
 import re
 import sys
 
@@ -24,6 +25,15 @@ if sys.version_info[0] >= 3:
     unichr = chr
     xrange = range
     long = int
+
+def cache(f):
+    memo = {}
+    @functools.wraps(f)
+    def cached(*args):
+        if args not in memo:
+            memo[args] = f(*args)
+        return memo[args]
+    return cached
 
 RUBY_T_OBJECT = 0x01
 RUBY_T_CLASS  = 0x02
@@ -67,14 +77,12 @@ _char = gdb.lookup_type('char')
 #
 # This seems to be the best way to detect (without access to macros)
 # whether or not this verison of Ruby was built with flonum support.
+@cache
 def Qtrue():
-    if Qtrue._Qtrue is None:
-        rb_equal, _ = gdb.lookup_symbol('rb_equal')
-        if rb_equal is None:
-            raise "Unable to find rb_equal symbol to discovery 'true'"
-        Qtrue._Qtrue = int(rb_equal.value()(0, 0))
-    return Qtrue._Qtrue
-Qtrue._Qtrue = None
+    rb_equal, _ = gdb.lookup_symbol('rb_equal')
+    if rb_equal is None:
+        raise "Unable to find rb_equal symbol to discovery 'true'"
+    return int(rb_equal.value()(0, 0))
 
 def Qfalse():
     return 0
@@ -120,19 +128,16 @@ def SYMBOL_FLAG():
 # Ruby 1.9 introduced object "trust" (which is somehow different from
 # taint tracking) and a new flag to go with it. If anything goes
 # wrong, assume that 1.8 is dead
+@cache
 def FL_USHIFT():
-    if FL_USHIFT._FL_USHIFT is None:
-        try:
-            if gdb.lookup_symbol('rb_obj_untrusted')[0] is None:
-                FL_USHIFT._FL_USHIFT = 11
-            else:
-                FL_USHIFT._FL_USHIFT = 12
-        except RuntimeError:
-            # odds are pretty good we're not dealing with Ruby 1.8, so
-            # make a good guess
-            FL_USHIFT._FL_USHIFT = 12
-    return FL_USHIFT._FL_USHIFT
-FL_USHIFT._FL_USHIFT = None
+    try:
+        if gdb.lookup_symbol('rb_obj_untrusted')[0] is None:
+            return 11
+    except RuntimeError:
+        # odds are pretty good we're not dealing with Ruby 1.8, so
+        # make a good guess
+        pass
+    return 12
 
 def FL_USER(n):
     return 1 << (FL_USHIFT() + n)
@@ -168,18 +173,17 @@ class RubyVal(object):
             return t
 
     @classmethod
+    @cache
     def all_subclasses(cls):
-        if cls.__all_subclasses__ is None:
-            cls.__all_subclasses__ = set()
-            q = [cls]
-            while q:
-                parent = q.pop()
-                for child in parent.__subclasses__():
-                    if child not in cls.__all_subclasses__:
-                        cls.__all_subclasses__.add(child)
-                        q.append(child)
-        return cls.__all_subclasses__
-    __all_subclasses__ = None
+        all_subclasses = set()
+        q = [cls]
+        while q:
+            parent = q.pop()
+            for child in parent.__subclasses__():
+                if child not in all_subclasses:
+                    all_subclasses.add(child)
+                    q.append(child)
+        return all_subclasses
 
 class RubyVALUE(RubyVal):
     """
@@ -374,12 +378,23 @@ class RubyFalse(RubyVALUE):
 class RubyID(RubyVal):
     _typename = 'ID'
 
+    # TODO: Even in Ruby 2.1 (where symbols are GC'd), once a given ID
+    # is assigned it's never reused, so we could do a lot of caching
+    # here for efficiency
+
     @staticmethod
+    @cache
     def global_symbols():
         symbol, _ = gdb.lookup_symbol('global_symbols')
         if symbol is None:
             raise "Unable to find global_symbols symbol for converting symbols"
         return symbol.value()
+
+    def __long__(self):
+        return long(self._gdbval)
+
+    def __int__(self):
+        return int(self._gdbval)
 
     def __str__(self):
         return self.string(set())
@@ -430,7 +445,15 @@ class RubyRObject(RubyRBasic):
     _typename = 'struct RObject'
 
 class RubyRClass(RubyRBasic):
+    _type = RUBY_T_CLASS
     _typename = 'struct RClass'
+
+    def name():
+        iv_tbl = self._gdbval['ptr']['iv_tbl']
+        return
+
+    def proxyval(self, visited):
+        pass
 
 class RubyRString(RubyRBasic):
     _type = RUBY_T_STRING
@@ -440,7 +463,7 @@ class RubyRString(RubyRBasic):
     def RSTRING_NOEMBED():
         return FL_USER(1)
 
-    def proxyval(self, visited):
+    def __str__(self):
         if self.flags() & RubyRString.RSTRING_NOEMBED():
             ptr = self._gdbval['as']['heap']['ptr']
             length = self._gdbval['as']['heap']['len']
@@ -448,6 +471,9 @@ class RubyRString(RubyRBasic):
             ptr = self._gdbval['as']['ary']
             length = (self.flags() >> (2 + FL_USHIFT())) & 31
         return ptr.cast(_char.array(long(length)).pointer()).dereference().string()
+
+    def proxyval(self, visited):
+        return str(self)
 
 class RubyRArray(RubyRBasic):
     _type = RUBY_T_ARRAY
