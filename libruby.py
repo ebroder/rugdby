@@ -77,12 +77,12 @@ _char = gdb.lookup_type('char')
 #
 # This seems to be the best way to detect (without access to macros)
 # whether or not this verison of Ruby was built with flonum support.
+#
+# Also, we have to use gdb.parse_and_eval so that this works on older
+# gdbs, which don't have gdb.Symbol.value() support
 @cache
 def Qtrue():
-    rb_equal, _ = gdb.lookup_symbol('rb_equal')
-    if rb_equal is None:
-        raise "Unable to find rb_equal symbol to discovery 'true'"
-    return int(rb_equal.value()(0, 0))
+    return int(gdb.parse_and_eval('rb_equal(0, 0)'))
 
 def Qfalse():
     return 0
@@ -131,12 +131,12 @@ def SYMBOL_FLAG():
 @cache
 def FL_USHIFT():
     try:
-        if gdb.lookup_symbol('rb_obj_untrusted')[0] is None:
+        gdb.parse_and_eval('rb_obj_untrusted')
+    except gdb.error:
+        if e.args[0].startswith('No symbol'):
             return 11
-    except RuntimeError:
         # odds are pretty good we're not dealing with Ruby 1.8, so
         # make a good guess
-        pass
     return 12
 
 def FL_USER(n):
@@ -385,10 +385,7 @@ class RubyID(RubyVal):
     @staticmethod
     @cache
     def global_symbols():
-        symbol, _ = gdb.lookup_symbol('global_symbols')
-        if symbol is None:
-            raise "Unable to find global_symbols symbol for converting symbols"
-        return symbol.value()
+        return gdb.parse_and_eval('global_symbols')
 
     def __long__(self):
         return long(self._gdbval)
