@@ -445,12 +445,8 @@ class RubyRClass(RubyRBasic):
     _type = RUBY_T_CLASS
     _typename = 'struct RClass'
 
-    def name():
-        iv_tbl = self._gdbval['ptr']['iv_tbl']
-        return
-
-    def proxyval(self, visited):
-        pass
+    # Strategy: self->ptr->iv_tbl includes a :__classpath__ hidden
+    # variable
 
 class RubyRString(RubyRBasic):
     _type = RUBY_T_STRING
