@@ -13,9 +13,11 @@ def main():
     os.execlp(
         'gdb',
         'gdb',
+        '-q',
         '-nx', # Don't read gdbinit
         '--ex', 'add-auto-load-safe-path %s' % (root,),
         '--ex', 'file %s' % (ruby,),
+        '--ex', 'set height 0',
         '--eval-command', 'python sys.argv = %r' % (sys.argv,),
         '--eval-command', 'python import runpy',
         '--eval-command', 'python runpy.run_path(%r, globals())' % (os.path.join(root, 'test/lib/wrap.py'),),
