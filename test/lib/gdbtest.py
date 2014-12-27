@@ -6,7 +6,7 @@ import gdb
 
 root = os.path.abspath(os.path.relpath('../../', os.path.dirname(__file__)))
 sys.path.append(root)
-import libruby
+import rugdby
 
 class GDBTest(unittest.TestCase):
     def setUp(self):
