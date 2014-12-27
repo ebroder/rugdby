@@ -4,8 +4,6 @@ import unittest
 
 import gdb
 
-root = os.path.abspath(os.path.relpath('../../', os.path.dirname(__file__)))
-sys.path.append(root)
 import rugdby
 
 class GDBTest(unittest.TestCase):

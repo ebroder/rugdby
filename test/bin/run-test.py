@@ -10,9 +10,6 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     ruby = subprocess.check_output(['rbenv', 'which', 'ruby']).strip()
 
-    #path = os.environ.get('PYTHONPATH', '').split(':')
-    #os.environ['PYTHONPATH'] = ':'.join([os.path.join(root, 'test/lib')] + path)
-
     os.execlp(
         'gdb',
         'gdb',
