@@ -8,7 +8,7 @@ import sys
 
 def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ruby = subprocess.check_output(['ruby', '-r', 'rbconfig', '-e', 'puts RbConfig.ruby']).strip()
+    ruby = subprocess.check_output(['ruby', '-r', 'rubygems', '-e', 'puts Gem.ruby']).strip()
 
     os.execlp(
         'gdb',
