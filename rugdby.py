@@ -90,7 +90,7 @@ def Qtrue():
 def Qfalse():
     return 0
 
-def Qnil():
+def Qnil(): # pragma: no cover
     if Qtrue() == 2:
         return 4
     elif Qtrue() == 20:
@@ -98,7 +98,7 @@ def Qnil():
     else:
         raise "Unknown determine Qnil from unknown value for true: %s" % Qtrue()
 
-def IMMEDIATE_MASK():
+def IMMEDIATE_MASK(): # pragma: no cover
     if Qtrue() == 2:
         return 0x3
     elif Qtrue() == 20:
@@ -109,7 +109,7 @@ def IMMEDIATE_MASK():
 def FIXNUM_FLAG():
     return 0x1
 
-def FLONUM_MASK():
+def FLONUM_MASK(): # pragma: no cover
     if Qtrue() == 2:
         # No value ANDed with FLONUM_MASK is non-zero
         return 0x0
@@ -158,10 +158,8 @@ class RubyVal(object):
     def get_gdb_type(cls):
         if cls._typename is None:
             return None
-        try:
-            t = gdb.lookup_type(cls._typename)
-        except gdb.error as e:
-            return None
+
+        t = gdb.lookup_type(cls._typename)
         if cls._typepointer:
             return t.pointer()
         else:
