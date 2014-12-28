@@ -132,7 +132,7 @@ def SYMBOL_FLAG():
 def FL_USHIFT():
     try:
         gdb.parse_and_eval('rb_obj_untrusted')
-    except gdb.error:
+    except gdb.error as e:
         if e.args[0].startswith('No symbol'):
             return 11
         # odds are pretty good we're not dealing with Ruby 1.8, so
