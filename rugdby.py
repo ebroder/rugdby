@@ -194,11 +194,12 @@ class RubyVALUE(RubyVal):
             the object is corrupted somehow. Mostly just has a sane
             repr()
             """
-            def __init__(self, address):
+            def __init__(self, address, type):
                 self.address = address
+                self.type = type
             def __repr__(self):
-                return '<VALUE at remote 0x%x>' % (self.address)
-        return FakeRepr(self.as_address())
+                return '<%s at remote 0x%x>' % (self.type, self.address)
+        return FakeRepr(self._typename, self.as_address())
 
     def type(self):
         immediate = self.as_address()
@@ -393,8 +394,11 @@ class RubyID(RubyVal):
         return ':' + str(self)
 
     def string(self, visited):
-        table = RubySTTable(RubyID.global_symbols()['id_str'])
-        return RubyVALUE.proxyval_from_value(table[self._gdbval], visited)
+        try:
+            table = RubySTTable(RubyID.global_symbols()['id_str'])
+            return RubyVALUE.proxyval_from_value(table[self._gdbval], visited)
+        except:
+            return "<Unknown symbol ID 0x%x>" % long(self)
 
     def proxyval(self, visited):
         return ':' + self.string(visited)
