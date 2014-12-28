@@ -125,8 +125,13 @@ def FLONUM_FLAG():
 def SYMBOL_MASK():
     return 0xff
 
-def SYMBOL_FLAG():
-    return 0xc
+def SYMBOL_FLAG(): # pragma: no cover
+    if Qtrue() == 2:
+        return 0xe
+    elif Qtrue() == 20:
+        return 0xc
+    else:
+        raise "Can't determine SYMBOL_FLAG from unknown value for true: %s" % Qtrue()
 
 def FL_USHIFT():
     return 12
@@ -304,12 +309,21 @@ class RubySTTable(RubyVal):
         super(RubySTTable, self).__init__(gdbval, self.get_gdb_type())
 
     def items(self):
+        new_style = 'as' in [f.name for f in self._gdbval.dereference().type.fields()]
         if self._gdbval['entries_packed']:
-            for i in xrange(long(self._gdbval['as']['packed']['real_entries'])):
-                entry = self._gdbval['as']['packed']['entries'][i]
-                yield entry['key'], entry['val']
+            if new_style:
+                for i in xrange(long(self._gdbval['as']['packed']['real_entries'])):
+                    entry = self._gdbval['as']['packed']['entries'][i]
+                    yield entry['key'], entry['val']
+            else:
+                for i in xrange(long(self._gdbval['num_entries'])):
+                    yield self._gdbval['bins'][i * 2], self._gdbval['bins'][i * 2 + 1]
         else:
-            ptr = self._gdbval['as']['big']['head']
+            if new_style:
+                ptr = self._gdbval['as']['big']['head']
+            else:
+                ptr = self._gdbval['head']
+
             while ptr:
                 yield ptr['key'], ptr['record']
                 ptr = ptr['fore']
