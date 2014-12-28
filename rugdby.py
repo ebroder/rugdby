@@ -395,6 +395,10 @@ class RubyID(RubyVal):
     def global_symbols():
         return gdb.parse_and_eval('global_symbols')
 
+    @staticmethod
+    def ID_SCOPE_SHIFT():
+        return 4
+
     def __long__(self):
         return long(self._gdbval)
 
@@ -408,9 +412,19 @@ class RubyID(RubyVal):
         return ':' + str(self)
 
     def string(self, visited):
+        global_symbols = RubyID.global_symbols()
         try:
-            table = RubySTTable(RubyID.global_symbols()['id_str'])
-            return RubyVALUE.proxyval_from_value(table[self._gdbval], visited)
+            if 'id_str' in [f.name for f in global_symbols.type.fields()]:
+                table = RubySTTable(global_symbols['id_str'])
+                return RubyVALUE.proxyval_from_value(table[self._gdbval], visited)
+            else:
+                serial = self._gdbval >> self.ID_SCOPE_SHIFT()
+                ids = RubyVALUE.from_value(global_symbols['ids'])
+                id_entry_unit = RubyVALUE.from_value(ids[0]).length() / 2
+
+                idx = serial / id_entry_unit
+                ary = RubyVALUE.from_value(ids[idx])
+                return RubyVALUE.proxyval_from_value(ary[(serial % id_entry_unit) * 2], visited)
         except:
             return "<Unknown symbol ID 0x%x>" % long(self)
 
