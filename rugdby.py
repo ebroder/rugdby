@@ -166,7 +166,10 @@ class RubyVal(object):
     def get_gdb_type(cls):
         if cls._typename is None:
             return None
-        t = gdb.lookup_type(cls._typename)
+        try:
+            t = gdb.lookup_type(cls._typename)
+        except gdb.error as e:
+            return None
         if cls._typepointer:
             return t.pointer()
         else:

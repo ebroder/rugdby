@@ -8,9 +8,19 @@ import rugdby
 
 class GDBTest(unittest.TestCase):
     def setUp(self):
-        bp = gdb.Breakpoint('vm_exec_core')
+        gdb.execute('set python print-stack full')
+
+        try:
+            gdb.parse_and_eval('vm_exec_core')
+            bp = gdb.Breakpoint('vm_exec_core')
+            bp.condition = 'th != 0'
+        except gdb.error as e:
+            if not e.args[0].startswith('No symbol'):
+                raise
+            bp = gdb.Breakpoint('ruby_exec')
+
         bp.silent = True
-        bp.condition = 'th != 0'
+
         try:
             gdb.execute('run -e ""')
         finally:
