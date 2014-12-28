@@ -14,6 +14,7 @@ def main():
         'gdb',
         'gdb',
         '-q',
+        '--batch-silent',
         '-nx', # Don't read gdbinit
         '--ex', 'add-auto-load-safe-path %s' % (root,),
         '--ex', 'file %s' % (ruby,),
