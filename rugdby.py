@@ -1,5 +1,6 @@
 #!/usr/bin/python
-"""Python gdb hooks for Ruby
+"""
+Python gdb hooks for Ruby
 
 From gdb 7 onwards, you can build in Python, allowing for extensions
 written in Python code. It's kind of silly to inspect Ruby state from
@@ -11,6 +12,8 @@ Python 3, so we need to bend over to work with both.
 Much of this logic is either inspired by or taken from the equivalent
 hooks for Python.
 
+Note: These hooks have been tested on Ruby 1.9.3 and later. It
+definitely doesn't work on 1.8
 """
 
 from __future__ import print_function, with_statement
@@ -125,18 +128,7 @@ def SYMBOL_MASK():
 def SYMBOL_FLAG():
     return 0xc
 
-# Ruby 1.9 introduced object "trust" (which is somehow different from
-# taint tracking) and a new flag to go with it. If anything goes
-# wrong, assume that 1.8 is dead
-@cache
 def FL_USHIFT():
-    try:
-        gdb.parse_and_eval('rb_obj_untrusted')
-    except gdb.error as e:
-        if e.args[0].startswith('No symbol'):
-            return 11
-        # odds are pretty good we're not dealing with Ruby 1.8, so
-        # make a good guess
     return 12
 
 def FL_USER(n):
