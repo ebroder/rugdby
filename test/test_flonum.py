@@ -18,3 +18,8 @@ class FlonumTest(gdbtest.GDBTest):
         # This should always be an RFloat
         self.assertIsInstance(rval, rugdby.RubyRFloat)
         self.assertPretty(val, '1.72723e-77')
+
+    def test_positive_zero(self):
+        val = gdb.parse_and_eval('rb_float_new(0)')
+        rval = rugdby.RubyVALUE.from_value(val)
+        self.assertPretty(val, '0.0')

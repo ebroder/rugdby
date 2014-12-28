@@ -359,7 +359,7 @@ class RubyFlonum(RubyVALUE):
         return (v >> b) | (v << ((v.type.sizeof * 8) - 3))
 
     def proxyval(self, visited):
-        if self.as_address() == 0x8000000000000002:
+        if self._gdbval == gdb.Value(0x8000000000000002):
             return 0.0
         else:
             v = self._gdbval.cast(_unsigned_long)
