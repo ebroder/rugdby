@@ -371,7 +371,7 @@ class RubyFalse(RubyVALUE):
 class RubyID(RubyVal):
     _typename = 'ID'
 
-    # TODO: Even in Ruby 2.1 (where symbols are GC'd), once a given ID
+    # TODO: Even in Ruby 2.2 (where symbols are GC'd), once a given ID
     # is assigned it's never reused, so we could do a lot of caching
     # here for efficiency
 
