@@ -189,6 +189,7 @@ class RubyVALUE(RubyVal):
     """
 
     _type = None
+    _types = []
     _typename = 'VALUE'
 
     def proxyval(self, visited):
@@ -246,7 +247,8 @@ class RubyVALUE(RubyVal):
                 return RubyRFloat
 
         for subclass in cls.all_subclasses():
-            if subclass._type and subclass._type == t:
+            if ((subclass._type and subclass._type == t) or
+                (subclass._types and t in subclass._types)):
                 return subclass
 
         # Otherwise, use the base class
@@ -273,7 +275,10 @@ class RubyVALUE(RubyVal):
         return cls(gdbval)
 
     @classmethod
-    def proxyval_from_value(cls, v, visited):
+    def proxyval_from_value(cls, v, visited=None):
+        if visited is None:
+            visited = set()
+
         return cls.from_value(v).proxyval(visited)
 
 class ProxyAlreadyVisited(object):
@@ -434,6 +439,22 @@ class RubyID(RubyVal):
 class RubySymbol(RubyVALUE):
     _type = RUBY_T_SYMBOL
 
+    @classmethod
+    def intern(cls, s):
+        global_symbols = RubyID.global_symbols()
+        if 'id_str' in [f.name for f in global_symbols.type.fields()]:
+            table = RubySTTable(global_symbols['id_str'])
+            for k, v in table.items():
+                if RubyVALUE.proxyval_from_value(v) == s:
+                    return k
+        else:
+            ids = RubyVALUE.from_value(global_symbols['ids'])
+            for idx in xrange(long(ids.length())):
+                ary = RubyVALUE.from_value(ids[idx])
+                for i in xrange(0, long(ary.length()), 2):
+                    if RubyVALUE.proxyval_from_value(ary[i]) == s:
+                        return ary[i + 1]
+
     def sym2id(self):
         return RubyID(self.as_address() >> RUBY_SPECIAL_SHIFT)
 
@@ -467,11 +488,74 @@ class RubyRObject(RubyRBasic):
     _typename = 'struct RObject'
 
 class RubyRClass(RubyRBasic):
-    _type = RUBY_T_CLASS
+    _types = [RUBY_T_CLASS, RUBY_T_MODULE]
     _typename = 'struct RClass'
 
-    # Strategy: self->ptr->iv_tbl includes a :__classpath__ hidden
-    # variable
+    # Strategy: self->ptr->iv_tbl hopefully includes a :__classpath__
+    # hidden variable. If that's not there, we have to do a search of
+    # the constant tree (starting from the constants over Object) and
+    # discover it.
+
+    @staticmethod
+    @cache
+    def classpathSymbol():
+        return RubySymbol.intern('__classpath__')
+
+    @staticmethod
+    @cache
+    def cObject():
+        return RubyVALUE.from_value(gdb.parse_and_eval('rb_cObject'))
+
+    def constants(self):
+        tbl = self._gdbval['ptr']['const_tbl']
+        if not tbl:
+            return None
+        return RubySTTable(tbl)
+
+    def classpath(self):
+        table = RubySTTable(self._gdbval['ptr']['iv_tbl'])
+        if not table.as_address():
+            table = {}
+        return table[self.classpathSymbol()]
+
+    @staticmethod
+    @cache
+    def rb_const_entry_t():
+        return gdb.lookup_type('rb_const_entry_t')
+
+    def searchForClass(self, target, visited=None):
+        if visited is None:
+            visited = set([self.as_address()])
+
+        constants = self.constants()
+        if constants is None:
+            return None
+
+        for k, v in constants.items():
+            value = v.cast(self.rb_const_entry_t().pointer())['value']
+
+            if long(value) == target.as_address():
+                return str(RubyID(k))
+
+            if long(value) in visited:
+                continue
+            visited.add(long(value))
+
+            rvalue = RubyVALUE.from_value(value)
+            if isinstance(rvalue, RubyRClass):
+                child = rvalue.searchForClass(target, visited)
+                if child is not None:
+                    return '%s::%s' % (RubyID(k), child)
+
+    def name(self):
+        try:
+            return RubyVALUE.proxyval_from_value(self.classpath())
+        except KeyError:
+            search = self.cObject().searchForClass(self)
+            if search == None:
+                return "%s:0x%s" % ("Module" if self.type() == RUBY_T_MODULE else "Class", self.as_address())
+            else:
+                return search
 
 class RubyRString(RubyRBasic):
     _type = RUBY_T_STRING
@@ -598,7 +682,7 @@ class RubyValPrinter(object):
         self.gdbval = gdbval
 
     def to_string(self):
-        return repr(RubyVALUE.proxyval_from_value(self.gdbval, set()))
+        return repr(RubyVALUE.proxyval_from_value(self.gdbval))
 
 def pretty_printer_lookup(gdbval):
     for cls in RubyVALUE.all_subclasses():
