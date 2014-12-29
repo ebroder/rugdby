@@ -38,6 +38,14 @@ def cache(f):
         return memo[args]
     return cached
 
+# ===============
+# Pretty printers
+# ===============
+#
+# To pretty-print Ruby values, we basically have to re-implement the
+# Ruby type-system in bizarro Python infused with gdb's concept of C
+# types.
+
 MAX_OUTPUT_LEN = 1024
 
 class StringTruncated(RuntimeError):
