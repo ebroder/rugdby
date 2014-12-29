@@ -7,7 +7,7 @@ from test.lib import gdbtest
 
 class HashTest(gdbtest.GDBTest):
     def test_pretty(self):
-        val = gdb.parse_and_eval('rb_eval_string("{\'a\' => 1, \'b\' => 2, \'c\' => 3}")')
+        val = gdb.parse_and_eval("""rb_eval_string("{'a' => 1, 'b' => 2, 'c' => 3}")""")
         rval = rugdby.RubyVALUE.from_value(val)
         self.assertIsInstance(rval, rugdby.RubyRHash)
         # Python hashes are unordered, so we can't predict what order
