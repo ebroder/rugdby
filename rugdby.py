@@ -601,7 +601,12 @@ class RubyRClass(RubyRBasic):
         return RubyVALUE.from_value(gdb.parse_and_eval('rb_cObject'))
 
     def iv_index_tbl(self):
-        return self._gdbval['ptr']['iv_index_tbl']
+        try:
+            return self._gdbval['ptr']['iv_index_tbl']
+        except gdb.error as e:
+            if e.args[0] != 'There is no member named iv_index_tbl.':
+                raise
+            return self._gdbval['iv_index_tbl']
 
     def constants(self):
         tbl = self._gdbval['ptr']['const_tbl']
