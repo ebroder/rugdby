@@ -538,7 +538,45 @@ class RubyRFloat(RubyRBasic):
         return float(self._gdbval.dereference()['float_value'])
 
 class RubyRObject(RubyRBasic):
+    _type = RUBY_T_OBJECT
     _typename = 'struct RObject'
+
+    @staticmethod
+    def ROBJECT_EMBED():
+        return FL_USER(1)
+
+    def klass(self):
+        return self._gdbval['basic']['klass']
+
+    def iv_index_tbl(self):
+        return RubyRClass(self.klass()).iv_index_tbl()
+
+    def ivptr(self):
+        if self.flags() & self.ROBJECT_EMBED():
+            return self._gdbval['as']['ary']
+        else:
+            return self._gdbval['as']['heap']['ivptr']
+
+    def ivars(self):
+        ivptr = self.ivptr()
+        iv_index_tbl = RubySTTable(self.iv_index_tbl())
+        for k, v in iv_index_tbl.items():
+            yield RubyID(k), RubyVALUE.from_value(ivptr[v])
+
+    def write_repr(self, out, visited):
+        if self.as_address() in visited:
+            out.write('<...>')
+            return
+        visited.add(self.as_address())
+
+        out.write('<')
+        out.write(RubyRClass(self.klass()).name())
+        for k, v in self.ivars():
+            out.write(' ')
+            out.write(str(k))
+            out.write('=')
+            v.write_repr(out, visited)
+        out.write('>')
 
 class RubyRClass(RubyRBasic):
     _types = [RUBY_T_CLASS, RUBY_T_MODULE]
@@ -558,6 +596,9 @@ class RubyRClass(RubyRBasic):
     @cache
     def cObject():
         return RubyVALUE.from_value(gdb.parse_and_eval('rb_cObject'))
+
+    def iv_index_tbl(self):
+        return self._gdbval['ptr']['iv_index_tbl']
 
     def constants(self):
         tbl = self._gdbval['ptr']['const_tbl']
