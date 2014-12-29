@@ -204,8 +204,8 @@ class RubyVALUE(RubyVal):
                 self.address = address
                 self.type = type
             def __repr__(self):
-                return '<%s at remote 0x%x>' % (self.type, self.address)
-        return FakeRepr(self._typename, self.as_address())
+                return '<%s at remote 0x%x>' % (str(self.type), self.address)
+        return FakeRepr(self.as_address(), self.get_gdb_type())
 
     def type(self):
         immediate = self.as_address()
