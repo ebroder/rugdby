@@ -13,3 +13,7 @@ class MiscTest(gdbtest.GDBTest):
     def test_complex(self):
         val = gdb.parse_and_eval('rb_eval_string("Complex.rect(1, 2)")')
         self.assertPretty(val, '(1+2j)')
+
+    def test_non_values(self):
+        val = gdb.parse_and_eval('(ID)23')
+        self.assertPretty(val, '23')
