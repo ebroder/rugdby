@@ -851,7 +851,7 @@ class RubyValPrinter(object):
 
 def pretty_printer_lookup(gdbval):
     for cls in RubyVALUE.all_subclasses():
-        if cls.get_gdb_type() == gdbval.type:
+        if cls.get_gdb_type() == gdbval.type.unqualified():
             return RubyValPrinter(gdbval)
 
 def register(obj):
