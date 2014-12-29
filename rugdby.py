@@ -558,6 +558,8 @@ class RubyRObject(RubyRBasic):
             return self._gdbval['as']['heap']['ivptr']
 
     def ivars(self):
+        # TODO: bounds-check the indexes in iv_index_tbl and make sure
+        # the values aren't Qundef
         ivptr = self.ivptr()
         iv_index_tbl = RubySTTable(self.iv_index_tbl())
         for k, v in iv_index_tbl.items():
