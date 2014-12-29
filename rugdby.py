@@ -532,6 +532,9 @@ class RubyRBasic(RubyVALUE):
     def type(self):
         return self.flags() & RUBY_T_MASK
 
+    def klass(self):
+        return self._gdbval['basic']['klass']
+
 class RubyRFloat(RubyRBasic):
     _typename = 'struct RFloat'
     def proxyval(self, visited):
@@ -544,9 +547,6 @@ class RubyRObject(RubyRBasic):
     @staticmethod
     def ROBJECT_EMBED():
         return FL_USER(1)
-
-    def klass(self):
-        return self._gdbval['basic']['klass']
 
     def iv_index_tbl(self):
         return RubyRClass(self.klass()).iv_index_tbl()
@@ -798,6 +798,25 @@ class RubyRHash(RubyRBasic):
 class RubyRFile(RubyRBasic):
     _type = RUBY_T_FILE
     _typename = 'struct RFile'
+
+    def write_repr(self, out, visited):
+        fptr = self._gdbval['fptr']
+        if not fptr:
+            return super(RubyRFile, self).write_repr(out, visited)
+
+        out.write('#<')
+        out.write(RubyRClass(self.klass()).name())
+        out.write(':')
+        path = RubyVALUE.proxyval_from_value(fptr['pathv'], visited)
+        if path:
+            out.write(path)
+        elif fptr['fd'] >= 0:
+            out.write('fd %d' % (fptr['fd'],))
+
+        if fptr['fd'] < 0:
+            out.write(' (closed)')
+
+        out.write('>')
 
 class RubyRRational(RubyRBasic):
     _type = RUBY_T_RATIONAL
