@@ -153,6 +153,8 @@ class RubyVal(object):
     def __init__(self, gdbval, cast_to=None):
         if cast_to:
             self._gdbval = gdbval.cast(cast_to)
+        elif self.get_gdb_type():
+            self._gdbval = gdbval.cast(self.get_gdb_type())
         else:
             self._gdbval = gdbval
 
@@ -456,7 +458,7 @@ class RubySymbol(RubyVALUE):
                         return ary[i + 1]
 
     def sym2id(self):
-        return RubyID(self.as_address() >> RUBY_SPECIAL_SHIFT)
+        return RubyID(self._gdbval >> RUBY_SPECIAL_SHIFT)
 
     def proxyval(self, visited):
         return self.sym2id()
@@ -541,9 +543,8 @@ class RubyRClass(RubyRBasic):
                 continue
             visited.add(long(value))
 
-            rvalue = RubyVALUE.from_value(value)
-            if isinstance(rvalue, RubyRClass):
-                child = rvalue.searchForClass(target, visited)
+            if RubyVALUE(value).type() in [RUBY_T_CLASS, RUBY_T_MODULE]:
+                child = RubyRClass(value).searchForClass(target, visited)
                 if child is not None:
                     return '%s::%s' % (RubyID(k), child)
 
