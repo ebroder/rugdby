@@ -186,6 +186,7 @@ class RubyVal(object):
         return long(self._gdbval)
 
     @classmethod
+    @cache
     def get_gdb_type(cls):
         if cls._typename is None:
             return None
