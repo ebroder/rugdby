@@ -422,15 +422,24 @@ class RubyNil(RubyVALUE):
     def proxyval(self, visited):
         return None
 
+    def write_repr(self, out, visited):
+        out.write('nil')
+
 class RubyTrue(RubyVALUE):
     _type = RUBY_T_TRUE
     def proxyval(self, visited):
         return True
 
+    def write_repr(self, out, visited):
+        out.write('true')
+
 class RubyFalse(RubyVALUE):
     _type = RUBY_T_FALSE
     def proxyval(self, visited):
         return False
+
+    def write_repr(self, out, visited):
+        out.write('false')
 
 class RubyID(RubyVal):
     _typename = 'ID'
@@ -720,6 +729,28 @@ class RubyRHash(RubyRBasic):
             v = RubyVALUE.proxyval_from_value(v, visited)
             result[k] = v
         return result
+
+    def write_repr(self, out, visited):
+        if self.as_address() in visited:
+            out.write('{...}')
+            return
+        visited.add(self.as_address())
+
+        out.write('{')
+
+        if self._gdbval['ntbl']:
+            first = True
+            for k, v in self.items():
+                if first:
+                    first = False
+                else:
+                    out.write(', ')
+
+                RubyVALUE.from_value(k).write_repr(out, visited)
+                out.write(' => ')
+                RubyVALUE.from_value(v).write_repr(out, visited)
+
+        out.write('}')
 
 class RubyRFile(RubyRBasic):
     _type = RUBY_T_FILE
