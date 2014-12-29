@@ -120,7 +120,15 @@ def Qnil(): # pragma: no cover
     elif Qtrue() == 20:
         return 8
     else:
-        raise "Unknown determine Qnil from unknown value for true: %s" % Qtrue()
+        raise "Unable to determine Qnil from unknown value for true: %s" % Qtrue()
+
+def Qundef(): # pragma: no cover
+    if Qtrue() == 2:
+        return 6
+    elif Qtrue() == 20:
+        return 52
+    else:
+        raise "Unable to determine Qundef from unknown value for true: %s" % Qtrue()
 
 def IMMEDIATE_MASK(): # pragma: no cover
     if Qtrue() == 2:
@@ -264,6 +272,9 @@ class RubyVALUE(RubyVal):
 
         if immediate == Qtrue():
             return RUBY_T_TRUE
+
+        if immediate == Qundef():
+            return RUBY_T_UNDEF
 
         # deal with immediates
         if immediate & FIXNUM_FLAG():
@@ -550,7 +561,7 @@ class RubyRObject(RubyRBasic):
         return FL_USER(1)
 
     def iv_index_tbl(self):
-        return RubyRClass(self.klass()).iv_index_tbl()
+        return RubyRClass(self.klass()).real_class().iv_index_tbl()
 
     def ivptr(self):
         if self.flags() & self.ROBJECT_EMBED():
@@ -559,12 +570,13 @@ class RubyRObject(RubyRBasic):
             return self._gdbval['as']['heap']['ivptr']
 
     def ivars(self):
-        # TODO: bounds-check the indexes in iv_index_tbl and make sure
-        # the values aren't Qundef
+        # TODO: bounds-check the indexes in iv_index_tbl
         ivptr = self.ivptr()
         iv_index_tbl = RubySTTable(self.iv_index_tbl())
-        for k, v in iv_index_tbl.items():
-            yield RubyID(k), RubyVALUE.from_value(ivptr[v])
+        if iv_index_tbl.as_address():
+            for k, v in iv_index_tbl.items():
+                if ivptr[v] != Qundef():
+                    yield RubyID(k), RubyVALUE.from_value(ivptr[v])
 
     def write_repr(self, out, visited):
         if self.as_address() in visited:
@@ -582,7 +594,7 @@ class RubyRObject(RubyRBasic):
         out.write('>')
 
 class RubyRClass(RubyRBasic):
-    _types = [RUBY_T_CLASS, RUBY_T_MODULE]
+    _types = [RUBY_T_CLASS, RUBY_T_MODULE, RUBY_T_ICLASS]
     _typename = 'struct RClass'
 
     # Strategy: self->ptr->iv_tbl hopefully includes a :__classpath__
@@ -596,9 +608,19 @@ class RubyRClass(RubyRBasic):
         return RubySymbol.intern('__classpath__')
 
     @staticmethod
+    def FL_SINGLETON():
+        return FL_USER(0)
+
+    @staticmethod
     @cache
     def cObject():
         return RubyVALUE.from_value(gdb.parse_and_eval('rb_cObject'))
+
+    def real_class(self):
+        cls = self
+        while cls.flags() & self.FL_SINGLETON():
+            cls = RubyRClass(self._gdbval['super'])
+        return cls
 
     def iv_index_tbl(self):
         try:
