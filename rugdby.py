@@ -38,6 +38,30 @@ def cache(f):
         return memo[args]
     return cached
 
+MAX_OUTPUT_LEN = 1024
+
+class StringTruncated(RuntimeError):
+    pass
+
+class TruncatedStringIO(object):
+    '''Similar to cStringIO, but can truncate the output by raising a
+    StringTruncated exception'''
+    def __init__(self, maxlen=None):
+        self._val = ''
+        self.maxlen = maxlen
+
+    def write(self, data):
+        if self.maxlen:
+            if len(data) + len(self._val) > self.maxlen:
+                # Truncation:
+                self._val += data[0:self.maxlen - len(self._val)]
+                raise StringTruncated()
+
+        self._val += data
+
+    def getvalue(self):
+        return self._val
+
 RUBY_T_OBJECT = 0x01
 RUBY_T_CLASS  = 0x02
 RUBY_T_MODULE = 0x03
@@ -172,6 +196,39 @@ class RubyVal(object):
         else:
             return t
 
+    def proxyval(self, visited):
+        class FakeRepr(object):
+            """
+            Class representing a non-descript VALUE in the inferior
+            process for when we either don't have a custom scraper or
+            the object is corrupted somehow. Mostly just has a sane
+            repr()
+            """
+            def __init__(self, address, type):
+                self.address = address
+                self.type = type
+            def __repr__(self):
+                return '<%s at remote 0x%x>' % (str(self.type), self.address)
+        return FakeRepr(self.as_address(), self.get_gdb_type())
+
+    def write_repr(self, out, visited):
+        out.write(repr(self.proxyval(visited)))
+
+    def get_truncated_repr(self, maxlen):
+        '''
+        Get a repr-like string for the data, but truncate it at "maxlen" bytes
+        (ending the object graph traversal as soon as you do)
+        '''
+        out = TruncatedStringIO(maxlen)
+        try:
+            self.write_repr(out, set())
+        except StringTruncated:
+            # Truncation occurred:
+            return out.getvalue() + '...(truncated)'
+
+        # No truncation occurred:
+        return out.getvalue()
+
     @classmethod
     @cache
     def all_subclasses(cls):
@@ -193,21 +250,6 @@ class RubyVALUE(RubyVal):
     _type = None
     _types = []
     _typename = 'VALUE'
-
-    def proxyval(self, visited):
-        class FakeRepr(object):
-            """
-            Class representing a non-descript VALUE in the inferior
-            process for when we either don't have a custom scraper or
-            the object is corrupted somehow. Mostly just has a sane
-            repr()
-            """
-            def __init__(self, address, type):
-                self.address = address
-                self.type = type
-            def __repr__(self):
-                return '<%s at remote 0x%x>' % (str(self.type), self.address)
-        return FakeRepr(self.as_address(), self.get_gdb_type())
 
     def type(self):
         immediate = self.as_address()
@@ -634,6 +676,24 @@ class RubyRRegexp(RubyRBasic):
         return re.compile(RubyVALUE.proxyval_from_value(self._gdbval['src'], visited),
                           flags)
 
+    def write_repr(self, out, visited):
+        src = RubyVALUE.proxyval_from_value(self._gdbval['src'], visited)
+        if '/' in src:
+            begin, end = '%r{', '}'
+        else:
+            begin = end = '/'
+        out.write(begin)
+        out.write(src)
+        out.write(end)
+
+        opts = self._gdbval['ptr']['options']
+        if opts & self.ONIG_OPTION_IGNORECASE:
+            out.write('i')
+        if opts & self.ONIG_OPTION_EXTEND:
+            out.write('x')
+        if opts & self.ONIG_OPTION_MULTILINE:
+            out.write('m')
+
 class RubyRHash(RubyRBasic):
     _type = RUBY_T_HASH
     _typename = 'struct RHash'
@@ -683,7 +743,7 @@ class RubyValPrinter(object):
         self.gdbval = gdbval
 
     def to_string(self):
-        return repr(RubyVALUE.proxyval_from_value(self.gdbval))
+        return RubyVALUE.from_value(self.gdbval).get_truncated_repr(MAX_OUTPUT_LEN)
 
 def pretty_printer_lookup(gdbval):
     for cls in RubyVALUE.all_subclasses():
