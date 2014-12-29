@@ -600,6 +600,11 @@ class RubyRClass(RubyRBasic):
             else:
                 return search
 
+    def write_repr(self, out, visited):
+        out.write('#<')
+        out.write(self.name())
+        out.write('>')
+
 class RubyRString(RubyRBasic):
     _type = RUBY_T_STRING
     _typename = 'struct RString'
