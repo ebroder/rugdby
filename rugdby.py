@@ -877,7 +877,7 @@ class RubyValPrinter(object):
         self.gdbval = gdbval
 
     def to_string(self):
-        return RubyVALUE.from_value(self.gdbval).get_truncated_repr(MAX_OUTPUT_LEN)
+        return '(Ruby) ' + RubyVALUE.from_value(self.gdbval).get_truncated_repr(MAX_OUTPUT_LEN)
 
 def pretty_printer_lookup(gdbval):
     for cls in RubyVALUE.all_subclasses():

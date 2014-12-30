@@ -29,7 +29,9 @@ class GDBTest(unittest.TestCase):
         finally:
             bp.delete()
 
-    def assertPretty(self, val, pretty):
+    def assertPretty(self, val, expected):
         if isinstance(val, str):
             val = gdb.parse_and_eval(val)
-        self.assertEqual(str(val), pretty)
+        pretty = str(val)
+        self.assertTrue(pretty.startswith('(Ruby) '))
+        self.assertEqual(pretty[len('(Ruby) '):], expected)
