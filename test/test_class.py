@@ -24,3 +24,9 @@ class ClassTest(gdbtest.GDBTest):
     def test_pretty_class(self):
         val = gdb.parse_and_eval('rb_eval_string("Process::Status")')
         self.assertPretty(val, '#<Process::Status>')
+
+    def test_validate_name(self):
+        val = gdb.parse_and_eval('rb_eval_string("module A; module B; end; end; A::B")')
+        rval = rugdby.RubyVALUE.from_value(val)
+        self.assertEqual('A::B', rval.name())
+        self.assertTrue(rval.validate_name('A::B'))

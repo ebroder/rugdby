@@ -605,6 +605,8 @@ class RubyRClass(RubyRBasic):
     _types = [RUBY_T_CLASS, RUBY_T_MODULE, RUBY_T_ICLASS]
     _typename = 'struct RClass'
 
+    _name_cache = {}
+
     # Strategy: self->ptr->iv_tbl hopefully includes a :__classpath__
     # hidden variable. If that's not there, we have to do a search of
     # the constant tree (starting from the constants over Object) and
@@ -655,7 +657,7 @@ class RubyRClass(RubyRBasic):
     def rb_const_entry_t():
         return gdb.lookup_type('rb_const_entry_t')
 
-    def searchForClass(self, target, visited=None):
+    def search_for_class(self, target, visited=None):
         if visited is None:
             visited = set([self.as_address()])
 
@@ -674,18 +676,34 @@ class RubyRClass(RubyRBasic):
             visited.add(long(value))
 
             if RubyVALUE(value).type() in [RUBY_T_CLASS, RUBY_T_MODULE]:
-                child = RubyRClass(value).searchForClass(target, visited)
+                child = RubyRClass(value).search_for_class(target, visited)
                 if child is not None:
                     return '%s::%s' % (RubyID(k), child)
+
+    def validate_name(self, name):
+        rmod = self.cObject()
+        try:
+            for elt in name.split('::'):
+                v = rmod.constants()[RubySymbol.intern(elt) >> RUBY_SPECIAL_SHIFT]
+                mod = v.cast(self.rb_const_entry_t().pointer())['value']
+                rmod = RubyVALUE.from_value(mod)
+            return True
+        except KeyError:
+            return False
 
     def name(self):
         try:
             return RubyVALUE.proxyval_from_value(self.classpath())
         except KeyError:
-            search = self.cObject().searchForClass(self)
-            if search == None:
+            if (self.as_address() in self._name_cache and
+                self.validate_name(self._name_cache[self.as_address()])):
+                return self._name_cache[self.as_address()]
+
+            search = self.cObject().search_for_class(self)
+            if search is None:
                 return "%s:0x%s" % ("Module" if self.type() == RUBY_T_MODULE else "Class", self.as_address())
             else:
+                self._name_cache[self.as_address()] = search
                 return search
 
     def write_repr(self, out, visited):
